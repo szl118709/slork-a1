@@ -8,14 +8,13 @@
 //  1. D:DF#AA           2          3. C:CEGC        4. G:DGBB        5. G4:DGCC        6. C9:CEGD    
 [[50, 54, 57, 57], [55, 55, 55, 55], [48, 52, 55, 60], [50, 55, 59, 59], [50, 55, 60, 60], [48, 52, 55, 62]]@=> int chords[][];
 4 => int numNotes;
-
+6 => int numChan;
 // patch
-HevyMetl h[numNotes];
-// high pass (for echoes)
-HPF hpf[numNotes];
+HevyMetl h[numChan][numNotes];
+HevyMetl h_muted[numChan][numNotes];
 // reverb
-NRev r => dac; 
-.8 => dac.gain;
+NRev r; 
+.03 => dac.gain;
 // reverb mix
 0.05 => r.mix;
 
@@ -25,7 +24,7 @@ NRev r => dac;
 [14,14,14,10] @=> int sustains[]; // [15,15,13,15] from patch
 [15,15,15,15] @=> int releases[]; // [8,8,8,8] from patch
 
-HevyMetl h_muted[numNotes];
+
 [20,20,20,20] @=> int attacks_muted[]; // [18,14,15,15] from patch
 [31,31,31,31] @=> int decays_muted[];  // [31,31,26,31] from patch
 [5,5,5,5] @=> int sustains_muted[]; // [15,15,13,15] from patch
@@ -33,72 +32,76 @@ HevyMetl h_muted[numNotes];
 
 
 // connect
+for (int c; c < numChan; c++) {
 for( int i; i < numNotes; i++ )
 {
-    h[i] => r;
-    h_muted[i] => r;
-    // set high pass
-    600 => hpf[i].freq;
+    h[c][i] => r => dac.chan(c);
+    h_muted[c][i] => r => dac.chan(c);
     
     // LFO depth
-    0.0 => h[i].lfoDepth;
-    0.0 => h_muted[i].lfoDepth;
+    0.0 => h[c][i].lfoDepth;
+    0.0 => h_muted[c][i].lfoDepth;
     
     // ops
     for( 0=>int op; op < numNotes; op++ )
     {
-        h[i].opADSR( op,
-        h[i].getFMTableTime(attacks[op]),
-        h[i].getFMTableTime(decays[op]),
-        h[i].getFMTableSusLevel(sustains[op]),
-        h[i].getFMTableTime(releases[op]) );
+        h[c][i].opADSR( op,
+        h[c][i].getFMTableTime(attacks[op]),
+        h[c][i].getFMTableTime(decays[op]),
+        h[c][i].getFMTableSusLevel(sustains[op]),
+        h[c][i].getFMTableTime(releases[op]) );
     }
     for( 0=>int op; op < numNotes; op++ )
     {
-        h_muted[i].opADSR( op,
-        h_muted[i].getFMTableTime(attacks_muted[op]),
-        h_muted[i].getFMTableTime(decays_muted[op]),
-        h_muted[i].getFMTableSusLevel(sustains_muted[op]),
-        h_muted[i].getFMTableTime(releases_muted[op]) );
+        h_muted[c][i].opADSR( op,
+        h_muted[c][i].getFMTableTime(attacks_muted[op]),
+        h_muted[c][i].getFMTableTime(decays_muted[op]),
+        h_muted[c][i].getFMTableSusLevel(sustains_muted[op]),
+        h_muted[c][i].getFMTableTime(releases_muted[op]) );
     }
-
+}
 }
 
 
 fun void playChord(int curr)
 {
-    if (curr != 1) {
+    if (curr != 2) {
         // set the pitches
         for( 0 => int i; i < numNotes; i++ ) {
-            Std.mtof(chords[curr][i]) => h[i].freq;
+            Std.mtof(chords[curr-1][i]) => h[curr-1][i].freq;
         }
         
         // note on
         for( 0 => int i; i < numNotes; i++ )
-        { vel => h[i].noteOn; }
+        { vel => h[curr-1][i].noteOn; }
         // sound
         0.7*(playing_time) => now;
         
         // note off
         for( 0 => int i; i < numNotes; i++ )
-        { 1 => h[i].noteOff; }
+        { 1 => h[curr-1][i].noteOff; }
         // let ring
         0.3*(playing_time) => now;
     }
     else {
+        // set the pitches
+        for( 0 => int i; i < numNotes; i++ ) {
+            Std.mtof(chords[curr-1][i]) => h_muted[curr-1][i].freq;
+        }
         // note on
         for( 0 => int i; i < numNotes; i++ )
-        { vel => h_muted[i].noteOn; }
+        { vel => h_muted[curr-1][i].noteOn; }
         // sound
         0.7*(playing_time) => now;
         
         // note off
         for( 0 => int i; i < numNotes; i++ )
-        { 1 => h_muted[i].noteOff; }
+        { 1 => h_muted[curr-1][i].noteOff; }
         // let ring
         0.3*(playing_time) => now;
     }
 }
+
 
 // ----- OSC stuff -----
 // create our OSC receiver
@@ -106,36 +109,34 @@ OscIn oscin;
 // a thing to retrieve message contents
 OscMsg msg;
 // use port 12000 (default Wekinator output port)
-12000 => oscin.port;
+12001 => oscin.port;
 
-// listen for "/wek/output" message with 5 floats coming in
-oscin.addAddress( "/wek/outputs, ff" );
-// print
+// listen for "/wek/outputs" message with 2 floats coming in
+oscin.addAddress( "/wek/outputs, ii" );
 <<< "listening for OSC message from Wekinator on port 12000...", "" >>>;
 <<< " |- expecting \"/wek/outputs\" with 2 parameters...", "" >>>; 
 
 // expecting 2 output dimensions
 2 => int NUM_PARAMS;
-float myParams[NUM_PARAMS];
+int myParams[NUM_PARAMS];
 Envelope genv[NUM_PARAMS];
 
 // set the latest parameters as targets
 // NOTE: we rely on map2sound() to actually interpret these parameters musically
-fun void setParams( float params[] )
+fun void setParams( int params[] )
 {
     // make sure we have enough
     if( params.size() >= NUM_PARAMS )
     {	
         // adjust the synthesis accordingly
-        0.0 => float x;
         for( 0 => int i; i < NUM_PARAMS; i++ )
         {
             // get value
             params[i] => myParams[i];
         }
 
-        myParams[0] $ int => int new_left;
-        myParams[1] $ int => int new_right;
+        myParams[0] => int new_left;
+        myParams[1] => int new_right;
 
         0 => int play_left;
         0 => int play_right;
@@ -163,12 +164,11 @@ fun void setParams( float params[] )
 
 fun void waitForEvent()
 {
-    
     // infinite event loop
     while( true )
     {
         // array to hold params
-        float p[NUM_PARAMS];
+        int p[NUM_PARAMS];
         
         // wait for OSC message to arrive
         oscin => now;
@@ -178,27 +178,19 @@ fun void waitForEvent()
         while( oscin.recv(msg) ){
             for( int i; i < NUM_PARAMS; i++ )
             {
-                if( msg.typetag.charAt(i) == 'f' ) // float
+                if( msg.typetag.charAt(i) == 'i' ) // int
                 {
-                    msg.getFloat(i) => p[i];
+                    msg.getInt(i) => p[i];
                     // 1 +=> msg_count;
-                    cherr <= p[i] <= " ";
-                }
-                else if( msg.typetag.charAt(i) == 'i' ) // int
-                {
-                    msg.getFloat(i) => p[i];
-                    // 1 +=> msg_count;
-                    cherr <= p[i] <= " ";
-                }
-                else if( msg.typetag.charAt(i) == 's' ) // string
-                {
-                    cherr <= msg.getString(i) <= " ";
-                }                
+                    // cherr <= p[i] <= " ";
+                }              
             }         
         }
         
-        setParams( p );
-        // waiting_time => now;
+        if (p[0] > 0 && p[0] < 8){
+            setParams( p );
+            // waiting_time => now;
+        }
         //1::second => now;
     }
 }
@@ -215,6 +207,7 @@ if( me.args() ) me.arg(0) => Std.atoi => device;
 if( !hi.openKeyboard( device ) ) me.exit();
 <<< "keyboard '" + hi.name() + "' ready", "" >>>;
 
+fun void waitForKb() {
 // infinite event loop
 while( true )
 {
@@ -229,7 +222,7 @@ while( true )
         if( kb_msg.isButtonDown() )
         {
             <<< "down:", kb_msg.which, "(code)", kb_msg.key, "(usb key)", kb_msg.ascii, "(ascii)" >>>;
-            kb_msg.ascii - 49 => curr;
+            kb_msg.ascii - 48 => curr;
             if (curr >= 0 && curr <= 5) {
                 spork ~ playChord(curr);
             }
@@ -241,9 +234,11 @@ while( true )
         // waiting_time => now;
     }
 }
+}
 
 // spork osc receiver loop
 spork ~waitForEvent();
+spork ~waitForKb();
 
 // time loop to keep everything going
 while( true ) 1::second => now;
